@@ -1,10 +1,15 @@
-# Python
+# =====================================================
+# Combined .gitignore for Full-Stack Project
+# =====================================================
+
+# =====================================================
+# Python / Backend
+# =====================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -20,29 +25,82 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.venv
+
+# Virtual Environment
 venv/
 ENV/
+env/
+.venv/
 
-# Node.js
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Alembic
+alembic/versions/*.pyc
+
+# Poetry
+poetry.lock
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Sentry
+.sentryclirc
+
+# =====================================================
+# Node.js / Frontend
+# =====================================================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+dist/
+dist-ssr/
+*.local
 frontend/dist/
 frontend/build/
 
-# Environment variables
+# =====================================================
+# Environment Variables (NEVER commit secrets!)
+# =====================================================
 .env
 *.env
 .env.*
+.env.local
+.env.*.local
 !.env.example
 
-# Version Control
-.git/
+# =====================================================
+# IDEs and Editors
+# =====================================================
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.sw?
+*~
+.project
+.pydevproject
+.settings/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
-# OS-specific files
+# =====================================================
+# OS-specific Files
+# =====================================================
 .DS_Store
 .DS_Store?
 ._*
@@ -51,22 +109,35 @@ frontend/build/
 ehthumbs.db
 Thumbs.db
 
-# IDEs and editors
-.vscode/
-.idea/
-*.swp
-*.swo
-.project
-.pydevproject
-.settings/
-
+# =====================================================
 # Databases & Storage
+# =====================================================
 *.sqlite
+*.sqlite3
 *.db
 backend/data/
 backend/qdrant_storage/
 
-# System
+# =====================================================
+# Logs & Temporary Files
+# =====================================================
 *.log
+logs/
 temp/
 tmp/
+/tmp/
+
+# =====================================================
+# Uploads & User Data
+# =====================================================
+uploads/
+
+# =====================================================
+# Docker
+# =====================================================
+.dockerignore
+
+# =====================================================
+# Version Control (nested)
+# =====================================================
+.git/
