@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.dependencies import CurrentUser, ManagerUser
+from app.dependencies import CurrentUser, ManagerUser, check_organization_access
 from app.models.user import User
 from app.models.task import Task, TaskAssignment
 from app.models.meeting import Meeting, MeetingParticipant

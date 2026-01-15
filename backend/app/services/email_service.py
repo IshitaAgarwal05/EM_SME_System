@@ -7,7 +7,7 @@ import os
 from typing import Optional
 
 import structlog
-from resend import Resend
+import resend
 
 from app.config import settings
 
@@ -18,7 +18,12 @@ class EmailService:
     """Service for sending emails via Resend."""
 
     def __init__(self):
-        self.client = Resend(api_key=settings.resend_api_key) if settings.resend_api_key else None
+        # Configure resend with API key (new v2.x API)
+        if settings.resend_api_key:
+            resend.api_key = settings.resend_api_key
+            self.is_configured = True
+        else:
+            self.is_configured = False
         self.from_email = settings.from_email
         self.frontend_url = settings.frontend_url
 
@@ -43,7 +48,7 @@ class EmailService:
         Returns:
             True if email sent successfully, False otherwise
         """
-        if not self.client:
+        if not self.is_configured:
             logger.warning("resend_not_configured", action="skipping_email")
             return False
 
@@ -105,18 +110,19 @@ class EmailService:
         """
 
         try:
-            response = self.client.emails.send({
+            params: resend.Emails.SendParams = {
                 "from": self.from_email,
                 "to": [to_email],
                 "subject": subject,
                 "html": html_content,
-            })
+            }
+            response = resend.Emails.send(params)
             
             logger.info(
                 "invitation_email_sent",
                 to_email=to_email,
                 organization=organization_name,
-                email_id=response.get("id"),
+                email_id=getattr(response, 'id', None),
             )
             return True
             
@@ -135,7 +141,7 @@ class EmailService:
         organization_name: str,
     ) -> bool:
         """Send welcome email to new team member."""
-        if not self.client:
+        if not self.is_configured:
             return False
 
         subject = f"Welcome to {organization_name}!"
@@ -174,12 +180,13 @@ class EmailService:
         """
 
         try:
-            self.client.emails.send({
+            params: resend.Emails.SendParams = {
                 "from": self.from_email,
                 "to": [to_email],
                 "subject": subject,
                 "html": html_content,
-            })
+            }
+            resend.Emails.send(params)
             return True
         except Exception as e:
             logger.error("welcome_email_failed", to_email=to_email, error=str(e))

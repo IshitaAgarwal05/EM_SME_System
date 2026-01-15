@@ -19,7 +19,7 @@ export default function TasksPage() {
     const handleStatusChange = async (taskId: string, newStatus: string) => {
         try {
             await api.patch(`/tasks/${taskId}`, { status: newStatus });
-            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+            setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as Task['status'] } : t));
         } catch (err) {
             console.error("Failed to update status", err);
         }

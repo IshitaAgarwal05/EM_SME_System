@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.dependencies import get_current_user
+from app.db.session import get_db
 from app.models.invitation import Invitation
 from app.models.organization import Organization
 from app.models.user import User
@@ -24,7 +25,7 @@ from app.services.auth_service import AuthService
 from app.services.email_service import EmailService
 
 logger = structlog.get_logger()
-router = APIRouter()
+router = APIRouter(prefix="/invitations", tags=["Invitations"])
 
 
 @router.post("", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)

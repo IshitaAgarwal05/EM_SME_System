@@ -4,7 +4,7 @@ Main API v1 router that includes all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, files, tasks, financial, analytics, reminders, meetings, ai, announcements, events, categories
+from app.api.v1 import auth, users, files, tasks, financial, analytics, reminders, meetings, ai, announcements, events, categories, invitations
 
 api_router = APIRouter()
 
@@ -21,3 +21,4 @@ api_router.include_router(ai.router)
 api_router.include_router(announcements.router)
 api_router.include_router(events.router)
 api_router.include_router(categories.router)
+api_router.include_router(invitations.router)

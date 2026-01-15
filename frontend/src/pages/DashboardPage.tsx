@@ -60,8 +60,8 @@ export default function DashboardPage() {
             }));
 
             // Filter out months from forecast that are already in history (by name)
-            const historyNames = new Set(last3History.map(h => h.name));
-            const uniqueForecast = forecastPoints.filter(f => !historyNames.has(f.name));
+            const historyNames = new Set(last3History.map((h: any) => h.name));
+            const uniqueForecast = forecastPoints.filter((f: any) => !historyNames.has(f.name));
 
             setForecast([...last3History, ...uniqueForecast]);
 

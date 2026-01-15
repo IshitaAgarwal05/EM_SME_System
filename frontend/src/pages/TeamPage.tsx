@@ -5,10 +5,11 @@ import {
     Plus, User, Mail, Phone, Building2, Briefcase,
     CreditCard, Loader2, X, Activity, History,
     Users, Search, Filter, SortAsc, MoreVertical,
-    Trash2, Edit2, Megaphone, CheckSquare
+    Trash2, Edit2, Megaphone, CheckSquare, UserPlus
 } from "lucide-react";
 import { format } from "date-fns";
 import { useAuth } from "../context/AuthContext";
+import InviteTeamModal from "../components/InviteTeamModal";
 
 type Contractor = {
     id: string;
@@ -56,6 +57,7 @@ export default function TeamPage() {
     const [formLoading, setFormLoading] = useState(false);
     const [isQuickTaskOpen, setIsQuickTaskOpen] = useState(false);
     const [isQuickAnnounceOpen, setIsQuickAnnounceOpen] = useState(false);
+    const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
     const [isContractorDetailsOpen, setIsContractorDetailsOpen] = useState(false);
     const [contractorDetails, setContractorDetails] = useState<any>(null);
@@ -258,12 +260,20 @@ export default function TeamPage() {
                     </div>
                     <div className="flex items-center gap-3">
                         {activeTab === "team" && isManager && (
-                            <button
-                                onClick={() => setIsAddUserOpen(true)}
-                                className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-lg hover:shadow-slate-200 transition-all hover:-translate-y-0.5"
-                            >
-                                <Plus className="mr-2 h-4 w-4" /> Add Team Member
-                            </button>
+                            <>
+                                <button
+                                    onClick={() => setIsInviteModalOpen(true)}
+                                    className="inline-flex items-center px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-sm font-bold shadow-lg hover:shadow-purple-200 transition-all hover:-translate-y-0.5"
+                                >
+                                    <UserPlus className="mr-2 h-4 w-4" /> Invite via Email
+                                </button>
+                                <button
+                                    onClick={() => setIsAddUserOpen(true)}
+                                    className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-lg hover:shadow-slate-200 transition-all hover:-translate-y-0.5"
+                                >
+                                    <Plus className="mr-2 h-4 w-4" /> Add Team Member
+                                </button>
+                            </>
                         )}
                         {activeTab === "contractors" && isManager && (
                             <button
@@ -877,6 +887,13 @@ export default function TeamPage() {
                     </div>
                 </div>
             )}
+
+            {/* Invite Team Modal */}
+            <InviteTeamModal
+                isOpen={isInviteModalOpen}
+                onClose={() => setIsInviteModalOpen(false)}
+                onInviteSent={fetchAllData}
+            />
         </DashboardLayout>
     );
 }
