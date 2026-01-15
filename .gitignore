@@ -42,8 +42,8 @@ htmlcov/
 # Alembic
 alembic/versions/*.pyc
 
-# Poetry
-poetry.lock
+# Poetry (don't ignore poetry.lock - needed for reproducible builds)
+# poetry.lock
 
 # Celery
 celerybeat-schedule
