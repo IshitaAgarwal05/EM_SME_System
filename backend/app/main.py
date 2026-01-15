@@ -86,10 +86,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # MIDDLEWARE ORDER MATTERS
 
-# 1. Trusted Host (Prevent Host Header Attacks)
 app.add_middleware(
     TrustedHostMiddleware, 
-    allowed_hosts=["localhost", "127.0.0.1", "*.example.com"]
+    allowed_hosts=settings.allowed_hosts
 )
 
 # 2. CORS

@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0")
     port: int = Field(default=8000)
     workers: int = Field(default=4)
+    allowed_hosts: str = Field(default="*")
+
+    @field_validator("allowed_hosts", mode="after")
+    @classmethod
+    def parse_allowed_hosts(cls, v: str) -> list[str]:
+        """Parse allowed hosts from comma-separated string."""
+        if isinstance(v, str):
+            return [host.strip() for host in v.split(",")]
+        return v
 
     # Database
     database_url: PostgresDsn = Field(
