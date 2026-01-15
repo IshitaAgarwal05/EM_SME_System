@@ -103,10 +103,12 @@ class Settings(BaseSettings):
     gemini_model: str = Field(default="gemini-1.5-flash")  # Free and fast model
     use_gemini: bool = Field(default=False)  # Set to True to use Gemini instead of OpenAI
 
-    # Email (SendGrid)
+    # Email (Resend - preferred) and SendGrid (fallback)
+    resend_api_key: str | None = Field(default=None)
     sendgrid_api_key: str | None = Field(default=None)
     from_email: str = Field(default="noreply@example.com")
     from_name: str = Field(default="Event Management System")
+    frontend_url: str = Field(default="http://localhost:5173")
 
     # SMS (Twilio)
     twilio_account_sid: str | None = Field(default=None)

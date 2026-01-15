@@ -139,7 +139,7 @@ Clara **does not hallucinate external information** and does not modify data aut
 ### Development Setup (Recommended)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/IshitaAgarwal05/EM_SME_System.git
 cd EM_SME_System
 
 cp .env.example .env
