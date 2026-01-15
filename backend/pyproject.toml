@@ -34,6 +34,8 @@ python-dateutil = "^2.8.2"
 pytz = "^2023.3"
 structlog = "^24.1.0"
 sentry-sdk = {extras = ["fastapi"], version = "^1.39.2"}
+slowapi = "^0.1.9"
+resend = "^2.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.4"
