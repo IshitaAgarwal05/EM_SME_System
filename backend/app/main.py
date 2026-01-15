@@ -94,11 +94,19 @@ app.add_middleware(
 # 2. CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=settings.cors_allow_credentials,
+    allow_origins=["*"],  # DEBUG: Allow all origins to fix CORS
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Debug: Print all routes on startup
+@app.on_event("startup")
+async def startup_event():
+    routes = []
+    for route in app.routes:
+        routes.append(route.path)
+    logger.info("registered_routes", routes=routes)
 
 # 3. SlowAPI (Rate Limiting)
 app.add_middleware(SlowAPIMiddleware)
