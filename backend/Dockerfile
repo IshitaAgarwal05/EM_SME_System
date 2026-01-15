@@ -62,5 +62,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health')"
 
+# Set PYTHONPATH to include current directory for Alembic
+ENV PYTHONPATH=/app
+
 # Run application (with auto-migration for Render Free Tier)
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "export PYTHONPATH=$PYTHONPATH:. && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
