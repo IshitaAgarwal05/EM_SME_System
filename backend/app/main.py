@@ -172,7 +172,7 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "error": "Internal server error",
-            "details": {} if settings.is_production else {"message": str(exc)},
+            "details": {"message": str(exc)},  # DEBUG: Always show details to identify 500 error
         },
     )
 
