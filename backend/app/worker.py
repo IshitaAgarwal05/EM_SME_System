@@ -25,6 +25,10 @@ celery_app = Celery(
     backend=str(settings.redis_url)
 )
 
+# Import tasks so Celery worker can find them
+import app.tasks.daily_notifications  # noqa
+
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],

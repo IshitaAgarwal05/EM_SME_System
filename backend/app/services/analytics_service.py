@@ -90,9 +90,13 @@ class AnalyticsService:
         return trends
 
     async def get_details_by_category(self, start_date: date, end_date: date) -> list[dict[str, Any]]:
-        """Get expense breakdown by category."""
+        """Get expense breakdown by category. Coalesces NULL and 'Uncategorized' into one bucket."""
         query = select(
-            Transaction.category,
+            func.coalesce(
+                func.nullif(Transaction.category, ''),
+                func.nullif(Transaction.category, 'Uncategorized'),
+                'Uncategorized'
+            ).label('category'),
             func.sum(Transaction.amount).label('total')
         ).where(
             Transaction.organization_id == self.organization_id,
@@ -100,19 +104,34 @@ class AnalyticsService:
             Transaction.transaction_date <= end_date,
             Transaction.transaction_type == 'debit'
         ).group_by(
-            Transaction.category
+            func.coalesce(
+                func.nullif(Transaction.category, ''),
+                func.nullif(Transaction.category, 'Uncategorized'),
+                'Uncategorized'
+            )
         ).order_by(func.sum(Transaction.amount).desc())
-        
+
         result = await self.db.execute(query)
-        
+        rows = result.all()
+
+        # Merge any remaining duplicate 'Uncategorized' rows in Python
+        merged: dict[str, float] = {}
+        for row in rows:
+            cat = row.category if row.category and row.category.strip() and row.category != 'Uncategorized' else 'Uncategorized'
+            merged[cat] = merged.get(cat, 0.0) + float(row.total or 0)
+
         return [
-            {"category": row.category or "Uncategorized", "amount": float(row.total or 0)} 
-            for row in result
+            {"category": cat, "amount": amt}
+            for cat, amt in sorted(merged.items(), key=lambda x: -x[1])
         ]
 
     async def get_contractor_spend(self, start_date: date, end_date: date) -> list[dict[str, Any]]:
-        """Get spending breakdown by contractor."""
-        query = select(
+        """Get spending breakdown by contractor.
+        Primary: Payments linked to contractors.
+        Fallback: Transactions categorised as 'Contractor' when no Payment records exist.
+        """
+        # Primary: formal contractor payments
+        payment_query = select(
             Contractor.name,
             func.sum(Payment.amount).label('total')
         ).join(
@@ -120,18 +139,44 @@ class AnalyticsService:
         ).where(
             Payment.organization_id == self.organization_id,
             or_(
-                and_(Payment.payment_date != None, Payment.payment_date >= start_date, Payment.payment_date <= end_date),
-            and_(Payment.payment_date == None, Payment.created_at >= datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc), Payment.created_at <= datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc))
+                and_(Payment.payment_date != None,
+                     Payment.payment_date >= start_date,
+                     Payment.payment_date <= end_date),
+                and_(Payment.payment_date == None,
+                     Payment.created_at >= datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                     Payment.created_at <= datetime.combine(end_date, datetime.max.time()).replace(tzinfo=timezone.utc))
             )
-        ).group_by(
-            Contractor.name
-        ).order_by(func.sum(Payment.amount).desc())
-        
-        result = await self.db.execute(query)
-        
-        return [
-            {"contractor": row.name, "amount": float(row.total or 0)} 
+        ).group_by(Contractor.name).order_by(func.sum(Payment.amount).desc())
+
+        result = await self.db.execute(payment_query)
+        payment_rows = [
+            {"contractor": row.name, "amount": float(row.total or 0)}
             for row in result
+        ]
+
+        if payment_rows:
+            return payment_rows
+
+        # Fallback: transactions with category containing 'contractor' or 'vendor'
+        txn_query = select(
+            Transaction.counterparty,
+            func.sum(Transaction.amount).label('total')
+        ).where(
+            Transaction.organization_id == self.organization_id,
+            Transaction.transaction_date >= start_date,
+            Transaction.transaction_date <= end_date,
+            Transaction.transaction_type == 'debit',
+            or_(
+                func.lower(Transaction.category).contains('contractor'),
+                func.lower(Transaction.category).contains('vendor'),
+                func.lower(Transaction.category).contains('salary'),
+            )
+        ).group_by(Transaction.counterparty).order_by(func.sum(Transaction.amount).desc())
+
+        txn_result = await self.db.execute(txn_query)
+        return [
+            {"contractor": row.counterparty or "Unknown", "amount": float(row.total or 0)}
+            for row in txn_result
         ]
 
     async def get_monthly_breakdown(self, month: int, year: int, include_unreconciled: bool = True) -> dict[str, Any]:
@@ -409,72 +454,338 @@ class AnalyticsService:
         
         return insights
 
+    # Categories treated as Cost of Sales / COGS
+    COGS_CATEGORIES = {
+        "purchase", "purchases", "cogs", "cost of goods", "cost of sales",
+        "stock", "materials", "raw materials", "inventory", "merchandise"
+    }
+
     async def get_pl_statement(self, year: int) -> dict[str, Any]:
-        """Calculate real P&L data for the organization."""
-        # Income (credits)
-        income_query = select(
-            Transaction.category,
-            func.sum(Transaction.amount).label('total')
-        ).where(
-            Transaction.organization_id == self.organization_id,
-            func.extract('year', Transaction.transaction_date) == year,
-            Transaction.transaction_type == 'credit'
-        ).group_by(Transaction.category)
-        
-        income_res = await self.db.execute(income_query)
-        income_items = [{"category": row.category or "Revenue", "amount": float(row.total or 0)} for row in income_res]
-        total_income = sum(i['amount'] for i in income_items)
-        
-        # Expenses (debits)
-        expense_query = select(
-            Transaction.category,
-            func.sum(Transaction.amount).label('total')
-        ).where(
-            Transaction.organization_id == self.organization_id,
-            func.extract('year', Transaction.transaction_date) == year,
-            Transaction.transaction_type == 'debit'
-        ).group_by(Transaction.category)
-        
-        expense_res = await self.db.execute(expense_query)
-        expense_items = [{"category": row.category or "Others", "amount": float(row.total or 0)} for row in expense_res]
-        total_expense = sum(i['amount'] for i in expense_items)
-        
+        """Calculate P&L — Schedule III format with current + previous year comparison."""
+
+        async def _fetch_year(y: int) -> dict:
+            inc_q = select(
+                Transaction.category,
+                func.sum(Transaction.amount).label('total')
+            ).where(
+                Transaction.organization_id == self.organization_id,
+                func.extract('year', Transaction.transaction_date) == y,
+                Transaction.transaction_type == 'credit'
+            ).group_by(Transaction.category).order_by(func.sum(Transaction.amount).desc())
+
+            exp_q = select(
+                Transaction.category,
+                func.sum(Transaction.amount).label('total')
+            ).where(
+                Transaction.organization_id == self.organization_id,
+                func.extract('year', Transaction.transaction_date) == y,
+                Transaction.transaction_type == 'debit'
+            ).group_by(Transaction.category).order_by(func.sum(Transaction.amount).desc())
+
+            inc_res = await self.db.execute(inc_q)
+            exp_res = await self.db.execute(exp_q)
+
+            revenue_items = [
+                {"category": row.category or "Sales / Revenue", "amount": float(row.total or 0)}
+                for row in inc_res
+            ]
+            total_revenue = sum(i["amount"] for i in revenue_items)
+
+            all_expense_rows = [
+                {"category": row.category or "General Expenses", "amount": float(row.total or 0)}
+                for row in exp_res
+            ]
+
+            # Categorise expenses into Schedule III buckets
+            cost_of_materials, purchases, inventory_changes = 0.0, 0.0, 0.0
+            employee_expense, finance_costs, depreciation = 0.0, 0.0, 0.0
+            other_expenses_total = 0.0
+            other_expenses_rows = []
+
+            EMPLOYEE_CATS  = {"salary", "salaries", "wages", "payroll", "employee", "staff"}
+            FINANCE_CATS   = {"interest", "bank charges", "finance", "loan"}
+            DEPN_CATS      = {"depreciation", "amortisation", "amortization"}
+            COG_CATS       = self.COGS_CATEGORIES  # purchase, cogs, stock, materials…
+
+            for row in all_expense_rows:
+                cat = row["category"].strip().lower()
+                amt = row["amount"]
+                if cat in COG_CATS:
+                    if any(k in cat for k in ("material", "raw")):
+                        cost_of_materials += amt
+                    elif any(k in cat for k in ("stock", "inventory", "merchandise")):
+                        purchases += amt
+                    else:
+                        purchases += amt
+                elif any(k in cat for k in EMPLOYEE_CATS):
+                    employee_expense += amt
+                elif any(k in cat for k in FINANCE_CATS):
+                    finance_costs += amt
+                elif any(k in cat for k in DEPN_CATS):
+                    depreciation += amt
+                else:
+                    other_expenses_total += amt
+                    other_expenses_rows.append(row)
+
+            total_expenses = cost_of_materials + purchases + inventory_changes + \
+                             employee_expense + finance_costs + depreciation + other_expenses_total
+            profit_before_tax = total_revenue - total_expenses
+
+            return {
+                "revenue_items":     revenue_items,
+                "total_revenue":     total_revenue,
+                "other_income":      0.0,
+                "total_rev_inc":     total_revenue,
+                "cost_of_materials": cost_of_materials,
+                "purchases":         purchases,
+                "inventory_changes": inventory_changes,
+                "employee_expense":  employee_expense,
+                "finance_costs":     finance_costs,
+                "depreciation":      depreciation,
+                "other_expenses":    other_expenses_total,
+                "other_expense_rows": other_expenses_rows,
+                "total_expenses":    total_expenses,
+                "profit_before_tax": profit_before_tax,
+                "tax":               0.0,
+                "profit_after_tax":  profit_before_tax,
+                # legacy
+                "total_income":   total_revenue,
+                "total_expense":  total_expenses,
+                "gross_profit":   total_revenue - purchases - cost_of_materials,
+                "net_profit":     profit_before_tax,
+            }
+
+        cur = await _fetch_year(year)
+        prv = await _fetch_year(year - 1)
+
+        def row(name: str, c: float, p: float) -> dict:
+            return {"name": name, "current": c, "previous": p}
+
         return {
-            "year": year,
-            "income": income_items,
-            "expenses": expense_items,
-            "total_income": total_income,
-            "total_expense": total_expense,
-            "gross_profit": total_income - (total_expense * 0.4), # Simulated COGS
-            "net_profit": total_income - total_expense
+            "year":          year,
+            "previous_year": year - 1,
+
+            # Schedule III rows
+            "revenue_from_ops":  row("I. Revenue from Operations",          cur["total_revenue"],     prv["total_revenue"]),
+            "other_income":      row("II. Other Income",                     cur["other_income"],      prv["other_income"]),
+            "total_revenue":     row("III. Total Revenue (I + II)",          cur["total_rev_inc"],     prv["total_rev_inc"]),
+            "cost_of_materials": row("Cost of Materials Consumed",           cur["cost_of_materials"], prv["cost_of_materials"]),
+            "purchases":         row("Purchase of Stock-in-Trade",           cur["purchases"],         prv["purchases"]),
+            "inventory_changes": row("Changes in Inventories",               cur["inventory_changes"], prv["inventory_changes"]),
+            "employee_expense":  row("Employee Benefit Expense",             cur["employee_expense"],  prv["employee_expense"]),
+            "finance_costs":     row("Finance Costs",                        cur["finance_costs"],     prv["finance_costs"]),
+            "depreciation":      row("Depreciation and Amortisation Expense",cur["depreciation"],      prv["depreciation"]),
+            "other_expenses":    row("Other Expenses",                       cur["other_expenses"],    prv["other_expenses"]),
+            "other_expense_rows": cur["other_expense_rows"],
+            "total_expenses":    row("IV. Total Expenses",                   cur["total_expenses"],    prv["total_expenses"]),
+            "profit_before_tax": row("V. Profit before Tax (III - IV)",      cur["profit_before_tax"], prv["profit_before_tax"]),
+            "tax":               row("VI. Tax",                              cur["tax"],               prv["tax"]),
+            "profit_after_tax":  row("VII. Profit after Tax (V - VI)",       cur["profit_after_tax"],  prv["profit_after_tax"]),
+
+            # legacy flat fields so existing callers don't break
+            "income":       cur["revenue_items"],
+            "expenses":     cur["other_expense_rows"],
+            "total_income": cur["total_revenue"],
+            "total_expense":cur["total_expenses"],
+            "gross_profit": cur["gross_profit"],
+            "net_profit":   cur["profit_after_tax"],
+            "revenue":      cur["revenue_items"],
+            "operating_expenses": cur["other_expense_rows"],
+            "total_revenue_val": cur["total_revenue"],
+            "total_opex":  cur["other_expenses"],
+            "total_cogs":  cur["cost_of_materials"] + cur["purchases"],
+            "cost_of_sales": [],
         }
 
-    async def get_bs_statement(self) -> dict[str, Any]:
-        """Calculate real Balance Sheet data."""
-        # Assets: Current bank balance (Net of all credits and debits)
-        balance_query = select(
-            func.sum(case((Transaction.transaction_type == 'credit', Transaction.amount), else_=-Transaction.amount))
-        ).where(Transaction.organization_id == self.organization_id)
-        
-        current_assets = float((await self.db.execute(balance_query)).scalar() or 0)
-        
-        # Liabilities: Unpaid payments
-        liabilities_query = select(func.sum(Payment.amount)).where(
-            Payment.organization_id == self.organization_id,
-            Payment.status == 'pending'
-        )
-        total_liabilities = float((await self.db.execute(liabilities_query)).scalar() or 0)
-        
+    async def get_bs_statement(self, year: int | None = None) -> dict[str, Any]:
+        """Balance Sheet — Schedule III format with current + previous period comparison."""
+        from datetime import date as date_type
+
+        current_year  = year or date_type.today().year
+        previous_year = current_year - 1
+        current_end   = date_type(current_year, 12, 31)
+        previous_end  = date_type(previous_year, 12, 31)
+
+        async def _cash(end: date_type) -> float:
+            q = select(func.sum(case(
+                (Transaction.transaction_type == 'credit', Transaction.amount),
+                else_=-Transaction.amount
+            ))).where(
+                Transaction.organization_id == self.organization_id,
+                Transaction.transaction_date <= end,
+            )
+            return float((await self.db.execute(q)).scalar() or 0)
+
+        async def _trade_rec(end: date_type) -> float:
+            q = select(func.sum(Transaction.amount)).where(
+                Transaction.organization_id == self.organization_id,
+                Transaction.transaction_type == 'credit',
+                Transaction.is_reconciled == False,
+                Transaction.transaction_date <= end,
+            )
+            return float((await self.db.execute(q)).scalar() or 0)
+
+        async def _pay(statuses: list, end: date_type) -> float:
+            q = select(func.sum(Payment.amount)).where(
+                Payment.organization_id == self.organization_id,
+                Payment.status.in_(statuses),
+                Payment.created_at <= datetime.combine(end, datetime.max.time()).replace(tzinfo=timezone.utc),
+            )
+            return float((await self.db.execute(q)).scalar() or 0)
+
+        # Current period
+        cur_cash      = await _cash(current_end)
+        cur_trade_rec = await _trade_rec(current_end)
+        cur_trade_pay = await _pay(['pending'], current_end)
+        cur_other_cl  = await _pay(['processing'], current_end)
+        cur_total_ca  = cur_cash + cur_trade_rec
+        cur_equity    = cur_total_ca - (cur_trade_pay + cur_other_cl)
+
+        # Previous period
+        prv_cash      = await _cash(previous_end)
+        prv_trade_rec = await _trade_rec(previous_end)
+        prv_trade_pay = await _pay(['pending'], previous_end)
+        prv_other_cl  = await _pay(['processing'], previous_end)
+        prv_total_ca  = prv_cash + prv_trade_rec
+        prv_equity    = prv_total_ca - (prv_trade_pay + prv_other_cl)
+
+        def row(name: str, c: float, p: float) -> dict:
+            return {"name": name, "current": c, "previous": p}
+
+        cur_total = cur_total_ca
+        prv_total = prv_total_ca
+
         return {
-            "assets": [
-                {"name": "Cash and Bank", "amount": current_assets},
-                {"name": "Accounts Receivable", "amount": current_assets * 0.1} # Placeholder
-            ],
-            "liabilities": [
-                {"name": "Accounts Payable", "amount": total_liabilities},
-                {"name": "Short-term Loans", "amount": 0}
-            ],
-            "equity": current_assets - total_liabilities,
-            "total_assets": current_assets + (current_assets * 0.1),
-            "total_liabilities_equity": current_assets + (current_assets * 0.1)
+            "current_year":  current_year,
+            "previous_year": previous_year,
+
+            # ── I. EQUITY & LIABILITIES ──────────────────────────────────
+            "shareholder_funds": {
+                "share_capital":    row("(a) Share Capital",        0,           0),
+                "reserves_surplus": row("(b) Reserves and Surplus", cur_equity,  prv_equity),
+            },
+            "non_current_liabilities": {
+                "long_term_borrowings":  row("(a) Long-term Borrowings",          0, 0),
+                "deferred_tax_liab":     row("(b) Deferred Tax Liabilities (Net)",0, 0),
+                "other_ltl":             row("(c) Other Long-term Liabilities",   0, 0),
+                "long_term_provisions":  row("(d) Long-term Provisions",          0, 0),
+            },
+            "current_liabilities": {
+                "short_term_borrowings": row("(a) Short-term Borrowings",    0,             0),
+                "trade_payables":        row("(b) Trade Payables",            cur_trade_pay, prv_trade_pay),
+                "other_current_liab":    row("(c) Other Current Liabilities", cur_other_cl,  prv_other_cl),
+                "short_term_provisions": row("(d) Short-term Provisions",    0,             0),
+            },
+            "total_equity_liab": row("Total", cur_total, prv_total),
+
+            # ── II. ASSETS ────────────────────────────────────────────────
+            "non_current_assets": {
+                "tangible_assets":      row("(i) Tangible Assets",            0, 0),
+                "intangible_assets":    row("(ii) Intangible Assets",         0, 0),
+                "capital_wip":          row("(iii) Capital Work-in-Progress", 0, 0),
+                "non_current_invest":   row("(b) Non-current Investments",    0, 0),
+                "deferred_tax_assets":  row("(c) Deferred Tax Assets (Net)",  0, 0),
+                "long_term_loans":      row("(d) Long-term Loans & Advances", 0, 0),
+                "other_nca":            row("(e) Other Non-current Assets",   0, 0),
+            },
+            "current_assets": {
+                "current_investments":  row("(a) Current Investments",        0,             0),
+                "inventories":          row("(b) Inventories",                0,             0),
+                "trade_receivables":    row("(c) Trade Receivables",          cur_trade_rec, prv_trade_rec),
+                "cash_equivalents":     row("(d) Cash and Cash Equivalents",  cur_cash,      prv_cash),
+                "short_term_loans":     row("(e) Short-term Loans & Advances",0,             0),
+                "other_current_assets": row("(f) Other Current Assets",       0,             0),
+            },
+            "total_assets": row("Total", cur_total, prv_total),
+
+            # legacy flat fields for backward compat
+            "equity":                     cur_equity,
+            "total_current_assets":       cur_total_ca,
+            "total_current_liabilities":  cur_trade_pay + cur_other_cl,
+            "total_equity_and_liabilities": cur_total,
+            "assets":      [{"name": "Cash and Cash Equivalents", "amount": cur_cash},
+                            {"name": "Trade Receivables",         "amount": cur_trade_rec}],
+            "liabilities": [{"name": "Trade Payables",            "amount": cur_trade_pay},
+                            {"name": "Other Current Liabilities", "amount": cur_other_cl}],
+        }
+
+    async def get_cashflow_statement(self, year: int) -> dict[str, Any]:
+        """Calculate Cash Flow Statement (indirect method).
+        Sections: Operating, Investing, Financing Activities.
+        """
+        from datetime import date as date_type
+        start_date = date_type(year, 1, 1)
+        end_date   = date_type(year, 12, 31)
+
+        # ── Operating: all transactions in the year ─────────────────────────
+        ops_query = select(
+            Transaction.category,
+            Transaction.transaction_type,
+            func.sum(Transaction.amount).label('total')
+        ).where(
+            Transaction.organization_id == self.organization_id,
+            Transaction.transaction_date >= start_date,
+            Transaction.transaction_date <= end_date,
+        ).group_by(Transaction.category, Transaction.transaction_type
+        ).order_by(func.sum(Transaction.amount).desc())
+
+        ops_res = await self.db.execute(ops_query)
+        rows = ops_res.all()
+
+        operating_inflows  = []
+        operating_outflows = []
+        for row in rows:
+            cat = row.category or ("Revenue" if row.transaction_type == 'credit' else "Expenses")
+            amt = float(row.total or 0)
+            if row.transaction_type == 'credit':
+                operating_inflows.append({"name": cat, "amount": amt})
+            else:
+                operating_outflows.append({"name": cat, "amount": amt})
+
+        total_inflows  = sum(r["amount"] for r in operating_inflows)
+        total_outflows = sum(r["amount"] for r in operating_outflows)
+        net_operating  = total_inflows - total_outflows
+
+        # ── Financing: completed contractor payments in the year ─────────────
+        fin_query = select(func.sum(Payment.amount)).where(
+            Payment.organization_id == self.organization_id,
+            Payment.status == 'completed',
+            or_(
+                and_(Payment.payment_date >= start_date, Payment.payment_date <= end_date),
+                and_(Payment.payment_date == None,
+                     Payment.created_at >= datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc),
+                     Payment.created_at <= datetime.combine(end_date,   datetime.max.time()).replace(tzinfo=timezone.utc))
+            )
+        )
+        fin_outflows = float((await self.db.execute(fin_query)).scalar() or 0)
+        net_financing = -fin_outflows  # outflow to contractors
+
+        net_change = net_operating + net_financing
+
+        # Opening balance: net cash before this year
+        opening_query = select(
+            func.sum(case(
+                (Transaction.transaction_type == 'credit', Transaction.amount),
+                else_=-Transaction.amount
+            ))
+        ).where(
+            Transaction.organization_id == self.organization_id,
+            Transaction.transaction_date < start_date,
+        )
+        opening_balance = float((await self.db.execute(opening_query)).scalar() or 0)
+        closing_balance = opening_balance + net_change
+
+        return {
+            "year": year,
+            "operating_inflows":  operating_inflows,
+            "operating_outflows": operating_outflows,
+            "total_inflows":      total_inflows,
+            "total_outflows":     total_outflows,
+            "net_operating":      net_operating,
+            "financing_outflows": [{"name": "Contractor Payments", "amount": fin_outflows}] if fin_outflows else [],
+            "net_financing":      net_financing,
+            "net_investing":      0.0,
+            "net_change":         net_change,
+            "opening_balance":    opening_balance,
+            "closing_balance":    closing_balance,
         }
