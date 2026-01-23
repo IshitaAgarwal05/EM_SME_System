@@ -9,7 +9,8 @@ import {
     Bot,
     LogOut,
     ShieldCheck,
-    Users
+    Users,
+    Bell
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 
@@ -17,6 +18,9 @@ const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
     { name: "Finance", href: "/dashboard/finance", icon: Wallet },
+    { name: "Invoices", href: "/dashboard/invoices", icon: FileSpreadsheet },
+    { name: "Receivables", href: "/dashboard/aging", icon: Wallet },
+    { name: "Inventory", href: "/dashboard/inventory", icon: CheckSquare },
     { name: "Meetings", href: "/dashboard/meetings", icon: Calendar },
     { name: "Team", href: "/dashboard/team", icon: Users },
     { name: "Files", href: "/dashboard/files", icon: FileSpreadsheet },
@@ -82,6 +86,13 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
                         Welcome back, {user?.full_name?.split(" ")[0]}
                     </h2>
                     <div className="flex items-center gap-4">
+                        <Link
+                            to="/dashboard/notifications"
+                            className="text-gray-500 hover:text-gray-700 hover:bg-gray-100 p-2 rounded-full transition-colors relative"
+                            title="Notifications"
+                        >
+                            <Bell className="h-5 w-5" />
+                        </Link>
                         <AnnouncementSidebar />
                         <div
                             className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-medium cursor-pointer hover:ring-2 hover:ring-blue-200"

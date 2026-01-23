@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
 import api from "../lib/api";
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths } from "date-fns";
-import { Calendar as CalendarIcon, MapPin, Clock, Plus, Edit2, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar as CalendarIcon, MapPin, Clock, Plus, Edit2, Trash2, ChevronLeft, ChevronRight, Eye, EyeOff } from "lucide-react";
 import CreateMeetingModal from "../components/CreateMeetingModal";
 
 type Meeting = {
@@ -15,20 +15,37 @@ type Meeting = {
     description?: string;
 };
 
+// Decode role from stored JWT (no library needed)
+function getUserRole(): string | null {
+    try {
+        const token = localStorage.getItem("token");
+        if (!token) return null;
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        return payload.role || null;
+    } catch { return null; }
+}
+
+const ELEVATED_ROLES = new Set(["owner", "admin", "manager"]);
+
 export default function MeetingsPage() {
     const [meetings, setMeetings] = useState<Meeting[]>([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingMeeting, setEditingMeeting] = useState<Meeting | null>(null);
     const [currentDate, setCurrentDate] = useState(new Date());
+    const [viewAll, setViewAll] = useState(false);
+
+    const userRole = getUserRole();
+    const canViewAll = userRole ? ELEVATED_ROLES.has(userRole) : false;
 
     useEffect(() => {
         fetchMeetings();
-    }, []);
+    }, [viewAll]);
 
     const fetchMeetings = async () => {
+        setLoading(true);
         try {
-            const res = await api.get("/meetings");
+            const res = await api.get(`/meetings?view_all=${viewAll}`);
             setMeetings(res.data.items || []);
         } catch (e) {
             console.error(e);
@@ -47,7 +64,22 @@ export default function MeetingsPage() {
                     <h2 className="text-2xl font-bold tracking-tight">Calendar</h2>
                     <p className="text-muted-foreground">{format(currentDate, "MMMM yyyy")}</p>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    {/* View-all toggle — only visible to owners/managers */}
+                    {canViewAll && (
+                        <button
+                            onClick={() => setViewAll(v => !v)}
+                            title={viewAll ? "Showing all org meetings — click to show only yours" : "Show all org meetings"}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border transition-colors ${viewAll
+                                    ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                                }`}
+                        >
+                            {viewAll ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                            {viewAll ? "All Org Meetings" : "My Meetings"}
+                        </button>
+                    )}
+
                     <div className="flex items-center rounded-md border bg-white p-1">
                         <button onClick={previousMonth} className="p-2 hover:bg-slate-50 rounded-md transition-colors">
                             <ChevronLeft className="h-4 w-4" />
@@ -89,11 +121,10 @@ export default function MeetingsPage() {
         const monthEnd = endOfMonth(monthStart);
         const startDate = startOfWeek(monthStart);
         const endDate = endOfWeek(monthEnd);
-
         const calendarDays = eachDayOfInterval({ start: startDate, end: endDate });
 
         return (
-            <div className="grid grid-cols-7 auto-rows-fr h-[calc(100vh-320px)] border-l border-t border-slate-100 min-h-[600px]">
+            <div className="grid grid-cols-7 auto-rows-fr h-[calc(100vh-340px)] border-l border-t border-slate-100 min-h-[600px]">
                 {calendarDays.map((day, i) => {
                     const dayMeetings = meetings.filter(m => isSameDay(new Date(m.start_time), day));
                     const isOtherMonth = !isSameMonth(day, monthStart);
@@ -102,11 +133,11 @@ export default function MeetingsPage() {
                     return (
                         <div
                             key={i}
-                            className={`min-h-[120px] p-2 border-r border-b border-slate-100 transition-colors hover:bg-slate-50/50 
+                            className={`min-h-[120px] p-2 border-r border-b border-slate-100 transition-colors hover:bg-slate-50/50
                                 ${isOtherMonth ? 'bg-slate-50/30 text-slate-300' : 'bg-white text-slate-700'}`}
                         >
                             <div className="flex justify-end mb-1">
-                                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium 
+                                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium
                                     ${isToday ? 'bg-blue-600 text-white shadow-sm ring-2 ring-blue-100' : ''}`}>
                                     {format(day, "d")}
                                 </span>
@@ -150,7 +181,11 @@ export default function MeetingsPage() {
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                     {renderDays()}
                     <div className="overflow-y-auto">
-                        {renderCells()}
+                        {loading ? (
+                            <div className="flex items-center justify-center h-40 text-gray-400 text-sm">Loading meetings…</div>
+                        ) : (
+                            renderCells()
+                        )}
                     </div>
                 </div>
             </div>

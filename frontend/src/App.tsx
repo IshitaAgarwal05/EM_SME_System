@@ -12,7 +12,13 @@ import AIPage from "./pages/AIPage";
 import ProfilePage from "./pages/ProfilePage";
 import TeamPage from "./pages/TeamPage";
 import LegalPage from "./pages/LegalPage";
+import InvoicesPage from "./pages/InvoicesPage";
+import AgingPage from "./pages/AgingPage";
+import InventoryPage from "./pages/InventoryPage";
+import NotificationsPage from "./pages/NotificationsPage";
 import { AuthProvider } from "./context/AuthContext";
+
+
 
 // Dashboard implementation imported from pages
 
@@ -27,6 +33,10 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/dashboard/tasks" element={<TasksPage />} />
           <Route path="/dashboard/finance" element={<FinancePage />} />
+          <Route path="/dashboard/invoices" element={<InvoicesPage />} />
+          <Route path="/dashboard/aging" element={<AgingPage />} />
+          <Route path="/dashboard/inventory" element={<InventoryPage />} />
+          <Route path="/dashboard/notifications" element={<NotificationsPage />} />
           <Route path="/dashboard/meetings" element={<MeetingsPage />} />
           <Route path="/dashboard/team" element={<TeamPage />} />
           <Route path="/dashboard/files" element={<FilesPage />} />
