@@ -33,18 +33,34 @@ async def list_meetings(
     current_user: CurrentUser,
     from_date: str | None = Query(None),
     to_date: str | None = Query(None),
+    view_all: bool = Query(False, description="Owner/Manager: see all org meetings"),
 ):
-    """List my meetings."""
+    """List meetings. With view_all=true (owner/manager only), returns all org meetings."""
     from sqlalchemy.orm import selectinload
-    query = select(Meeting).options(selectinload(Meeting.participants)).where(
-        Meeting.organization_id == current_user.organization_id,
-    ).order_by(Meeting.start_time)
-    
+
+    # Roles that can use view_all
+    elevated_roles = {"owner", "admin", "manager"}
+    can_view_all = view_all and current_user.role in elevated_roles
+
+    query = (
+        select(Meeting)
+        .options(selectinload(Meeting.participants))
+        .where(Meeting.organization_id == current_user.organization_id)
+        .order_by(Meeting.start_time)
+    )
+
     result = await db.execute(query)
     meetings = result.scalars().all()
-    
-    # Needs efficient loading of participants for list view
-    # Skipping heavy load optimization for now
+
+    if not can_view_all:
+        # Filter to meetings where current user is organizer or participant
+        user_id_str = str(current_user.id)
+        meetings = [
+            m for m in meetings
+            if str(m.organizer_id) == user_id_str
+            or any(str(p.id) == user_id_str for p in (m.participants or []))
+        ]
+
     return {"items": [MeetingResponse.model_validate(m) for m in meetings]}
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)

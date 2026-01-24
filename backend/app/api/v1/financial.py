@@ -252,11 +252,30 @@ async def get_pl_statement(
 async def get_bs_statement(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: CurrentUser,
+    year: int = Query(None),
 ):
-    """Get Balance Sheet statement data."""
+    """Get Balance Sheet statement data (Schedule III format, current + previous year)."""
+    if not year:
+        from datetime import date
+        year = date.today().year
     from app.services.analytics_service import AnalyticsService
     service = AnalyticsService(db, current_user.organization_id)
-    return await service.get_bs_statement()
+    return await service.get_bs_statement(year)
+
+
+@router.get("/statements/cf")
+async def get_cashflow_statement(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: CurrentUser,
+    year: int = Query(None),
+):
+    """Get Cash Flow Statement data."""
+    if not year:
+        from datetime import date
+        year = date.today().year
+    from app.services.analytics_service import AnalyticsService
+    service = AnalyticsService(db, current_user.organization_id)
+    return await service.get_cashflow_statement(year)
 
 
 @router.get("/statements/export")
